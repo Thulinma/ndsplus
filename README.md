@@ -25,7 +25,11 @@ Using the program
 
 Simply invoking the ndsplus binary like `./ndsplus` will print status information to the screen, like so:
 
-    INFO HERE
+    NDS Adapter+ firmware version 304 detected.
+    Card title: POKEMON B
+    Card ID: IRBO
+    Card size: 256 MiB
+    Save size: 512 KiB
 
 To backup a savegame, simply invoke the application like  `./ndsplus --backup <FILENAME HERE>`. For example `./ndsplus --backup somegame.sav`. This will attempt to read a backup of the savegame to the given filename. It will attempt to overwrite any existing file at that location without warning, so be careful.
 
