@@ -176,6 +176,44 @@ unsigned char * get_save(unsigned char offset, unsigned int bytepos){
   return response;
 }
 
+/// Writes 256 bytes of savegame data.
+/// The data is retrieved from the given offset and bytepos.
+/// offset is the first byte from the get_status() response.
+/// bytepos is the byte-position where the 256 bytes that will be returned should start.
+int put_save(unsigned char offset, unsigned int bytepos, unsigned char * data){
+  int len = 0;
+  int ret = 0;
+  unsigned char request[10] = {0x7b, 0xa5, 0, 0, 0, 0, 0x02, 0, 0, 0};
+  //set the offset in the request
+  request[7] = offset;
+  //set the bytepos in the request
+  request[2] = bytepos & 0xFF;
+  request[3] = (bytepos >> 8) & 0xFF;
+  request[4] = (bytepos >> 16) & 0xFF;
+  request[5] = (bytepos >> 24) & 0xFF;
+
+  //7ba5 00000000 02 13 0000?
+  
+  //7ba5 is the "command" for restore
+  //the next 4 bytes are the address in little endian format
+  //the seventh byte is always 0x02 - unknown what it is
+  //the eight byte is the offset: the first byte of the get_status() response
+  //the last two bytes seem to always be 0x0000
+  ret = libusb_bulk_transfer(handle, send_addr, request, 10, &len, 10000);
+  if (ret != 0 || len != 10){
+    std::cout << "Could not send savegame request to card!" << std::endl;
+    return 0;
+  }
+  
+  //request[256] = savegame data
+  ret = libusb_bulk_transfer(handle, send_addr, data, 256, &len, 10000);
+  if (ret != 0 || len != 256){
+    std::cout << "Could not send savegame to card!" << std::endl;
+    return 0;
+  }
+  return 1;
+}
+
 int main(int argc, char **argv){
   // set default options
   bool backup = false;
@@ -307,14 +345,24 @@ int main(int argc, char **argv){
     //extract some interesting bits of info
     printf("Card title: %.12s\n", card_header);
     printf("Card ID: %.4s\n", card_header+0x00C);
-    printf("Card size: %i MiB\n", (2 << (card_header[0x014] - 4)));
+    printf("Card size: %i MiB\n", (1 << (card_header[0x014] - 3)));
   }
-  // print save size
-  printf("Save size: %i KiB\n", (2 << (card_status[0x04] - 11)));
 
-  //calculate save size in bytes
-  unsigned int save_size = 2 << (card_status[0x04] - 1);
-  
+  //check if this is a weird one or not
+  if (card_status[0x04] > 0x20 && card_status[0x04] < 0xFF){
+    return drop_adapter("It looks like you got a card that I don't know how to handle. Please run me with --debug and post the output as an issue on github - thanks!");
+  }
+
+  //calculate and print save size
+  unsigned int save_size = 0;
+  if (card_status[0x04] == 0xFF){
+    save_size = 512;
+    printf("Save: 0.5 KiB EEPROM\n");
+  }else{
+    save_size = 1 << card_status[0x04];
+    printf("Save: %i KiB FLASH\n", save_size >> 10);
+  }
+
   // do a backup if requested - abort if file cannot be opened
   if (backup){
     printf("Backing up savegame...\n");
@@ -322,20 +370,49 @@ int main(int argc, char **argv){
     if (!backup_file.good()){return drop_adapter("Could not open file for backup :-(");}
     for (unsigned int i = 0; i < save_size; i += 512){
       unsigned char * data = get_save(card_status[0], i);
-      if (!data){return drop_adapter("Read error mid-savegame!");}
+      if (!data){return drop_adapter("Savegame read error mid-operation!");}
       backup_file.write((const char*)data, 512);
-      if (!backup_file.good()){return drop_adapter("Write error mid-savegame!");}
+      if (!backup_file.good()){return drop_adapter("File write error mid-operation!");}
       printf("\r%i%%...", (i*100) / save_size);
       fflush(stdout);
-      usleep(1000);//sleep for 1ms - reading too fast makes the adapter unhappy :-(
+      usleep(1000);//sleep for 1ms - too fast makes the adapter unhappy :-(
     }
     printf("\r100%%   \nBackup to %s completed!\n", backup_filename.c_str());
   }
 
+  // allocate a buffer for writing
+  unsigned char put_buffer[256];
 
-  //7ba5 00000000 02 01 0000 - start of penguinupload (256B)
-  //7ba5 00010000 02 01 0000 - end of penguinupload (256B)
-  
+  // do a wipe if requested - abort if anything goes wrong
+  if (wipe){
+    printf("Wiping savegame...\n");
+    memset(put_buffer, 0, 256);
+    for (unsigned int i = 0; i < save_size; i += 256){
+      int ret = put_save(card_status[0], i, put_buffer);
+      if (!ret){return drop_adapter("Savegame write error mid-operation!");}
+      printf("\r%i%%...", (i*100) / save_size);
+      fflush(stdout);
+      usleep(1000);//sleep for 1ms - too fast makes the adapter unhappy :-(
+    }
+    printf("\r100%%   \nWipe completed!\n");
+  }
+
+  // do a restore if requested - abort if anything goes wrong
+  if (restore){
+    printf("Restoring savegame...\n");
+    std::ifstream restore_file(restore_filename.c_str(), std::ifstream::in | std::ifstream::binary);
+    if (!restore_file.good()){return drop_adapter("Could not open file for restoring :-(");}
+    for (unsigned int i = 0; i < save_size; i += 256){
+      restore_file.read((char*)put_buffer, 256);
+      if (!restore_file.good()){return drop_adapter("File read error mid-operation!");}
+      int ret = put_save(card_status[0], i, put_buffer);
+      if (!ret){return drop_adapter("Savegame write error mid-operation!");}
+      printf("\r%i%%...", (i*100) / save_size);
+      fflush(stdout);
+      usleep(1000);//sleep for 1ms - too fast makes the adapter unhappy :-(
+    }
+    printf("\r100%%   \nRestore from file %s completed!\n", restore_filename.c_str());
+  }
 
   libusb_release_interface(handle, 0);
   libusb_close(handle);
@@ -343,11 +420,11 @@ int main(int argc, char **argv){
 }
 
 
-//card_status values for some games:
+//get_status and get_unknown values for some games:
 //ff ff0000 00aa3001 <- no card
-//13 002040 13aa3001 <- pkmn black 1 (4mbit eep, 256 rom)    c2ff01c0
-//23 002040 14aa3001 <- walking trainer (8mbit eep, 64m rom) 803f01e0
-//93 00c222 11aa3001 <- pilotwings (1mbit eeprom - ??? rom)  c27f0090
-//93 00c222 11aa3001 <- mario 3ds (1mbit eeprom - ??? rom)   c2fe0090
-//01 f0ffff ffaa3001 <- marchofpenguins (4kbit / 8m)         c2070000
-//01 f0ffff ffaa3001 <- shrek super slam (4k / 32m)          c21f0000
+//13 002040 13aa3001 <- pkmn black 1 (4mbit / 256 rom)    c2 ff 01 c0
+//23 002040 14aa3001 <- walking trainer (8mbit / 64m rom) 80 3f 01 e0
+//93 00c222 11aa3001 <- pilotwings (1mbit / ??? rom)      c2 7f 00 90
+//93 00c222 11aa3001 <- mario 3ds (1mbit / ??? rom)       c2 fe 00 90
+//01 f0ffff ffaa3001 <- marchofpenguins (4kbit / 8m)      c2 07 00 00
+//01 f0ffff ffaa3001 <- shrek super slam (4k / 32m)       c2 1f 00 00
