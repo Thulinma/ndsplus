@@ -19,20 +19,24 @@ If not, see <http://www.gnu.org/licenses/>.
 #include <getopt.h>
 #include "libusb.h"
 
-/// Outputs a 32-byte aligned hexdump to stderr.
+/// Outputs a 24-byte aligned hexdump to stderr.
 void hexdump(unsigned char *p, int len){
-  for (int i = 0; i < len; i += 32){
+  for (int i = 0; i < len; i += 24){
     fprintf(stderr, "%04x: ", i);
-    for (int j = 0; j < 32; ++j){
-      if (i+j < len){fprintf(stderr, "%02x ", p[i+j]);}else{fprintf(stderr, "   ");}
+    for (int j = 0; j < 24; ++j){
+      if (j % 4 == 3){
+        if (i+j < len){fprintf(stderr, "%02x ", p[i+j]);}else{fprintf(stderr, "   ");}
+      }else{
+        if (i+j < len){fprintf(stderr, "%02x", p[i+j]);}else{fprintf(stderr, "  ");}
+      }
       fprintf(stderr, " ");
     }
-    for (int j = 0; j < 32; ++j){
+    for (int j = 0; j < 24; ++j){
       if (i+j < len){
         if (isprint(p[i+j])){fprintf(stderr, "%c", p[i+j]);}else{fprintf(stderr, ".");}
       }
-      fprintf(stderr, "\n");
     }
+    fprintf(stderr, "\n");
   }
 }
 
