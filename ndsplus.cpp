@@ -58,7 +58,7 @@ int drop_adapter(const char * error){
 /// The status bytes are like this: ff ff0000 00 aa 3001 (no card inserted)
 /// The first byte is a savegame offset of some sort - it is required to read/write the savegame.
 /// The next 3 bytes are unknown and seem to differ per game.
-/// The fifth byte is the savegame size in bytes, encoded as 2^(X-1).
+/// The fifth byte is the savegame size in bytes, encoded as (1 << X).
 /// The sixth byte is unknown and seems to always be 0xAA.
 /// The last two bytes are the firmware version in little endian format.
 unsigned char * get_status(){
@@ -167,10 +167,10 @@ unsigned char * get_save(unsigned char offset, unsigned int bytepos){
     return 0;
   }
   
-  //reply[512] = beginning ROM header
+  //reply[512] = savegame data
   ret = libusb_bulk_transfer(handle, recv_addr, response, 512, &len, 10000);
   if (ret != 0 || len != 512){
-    std::cout << "Could not receive savegame from card!" << len << " / " << ret << std::endl;
+    std::cout << "Could not receive savegame from card!" << std::endl;
     return 0;
   }
   return response;
