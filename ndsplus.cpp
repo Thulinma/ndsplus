@@ -355,12 +355,23 @@ int main(int argc, char **argv){
 
   //calculate and print save size
   unsigned int save_size = 0;
-  if (card_status[0x04] == 0xFF){
-    save_size = 512;
-    printf("Save: 0.5 KiB EEPROM\n");
-  }else{
-    save_size = 1 << card_status[0x04];
-    printf("Save: %i KiB FLASH\n", save_size >> 10);
+  switch (card_status[0]){
+    case 0x01:
+      save_size = 512;
+      printf("Save: 0.5 KiB EEPROM\n");
+      break;
+    case 0x02:
+      save_size = 8192;
+      printf("Save: 8 KiB EEPROM\n");
+      break;
+    case 0x12:
+      save_size = 65536;
+      printf("Save: 64 KiB EEPROM\n");
+      break;
+    default:
+      save_size = 1 << card_status[0x04];
+      printf("Save: %i KiB FLASH\n", save_size >> 10);
+      break;
   }
 
   // do a backup if requested - abort if file cannot be opened
