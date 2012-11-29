@@ -56,10 +56,11 @@ int drop_adapter(const char * error){
 
 /// Retries the status of the NDS Adapter and returns the 8 status bytes.
 /// The status bytes are like this: ff ff0000 00 aa 3001 (no card inserted)
-/// The first byte is a savegame offset of some sort - it is required to read/write the savegame.
-/// The next 3 bytes are unknown and seem to differ per game.
+/// The first five bytes relate to the savedata chip.
+/// The first byte identifies the chip type, and size for EEPROM games.
+/// The second byte holds the EEPROM busy bit (bit0), 1 meaning busy.
 /// The fifth byte is the savegame size in bytes, encoded as (1 << X).
-/// The sixth byte is unknown and seems to always be 0xAA.
+/// The sixth byte is unused and seems to always be 0xAA.
 /// The last two bytes are the firmware version in little endian format.
 unsigned char * get_status(){
   unsigned char get_status[10] = {0x9c, 0xa5, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00};
@@ -80,37 +81,36 @@ unsigned char * get_status(){
   return 0;
 }
 
-/// This function retrieves the 4 unknown bytes and returns them.
-/// I have no clue what these are for, or why this is a two-part request, but the official software does this.
-unsigned char * get_unknown(){
+/// This function prepares the card for reading the header
+bool prepare_card(){
   int len = 0;
   int ret = 0;
   unsigned char request[10] = {0, 0xa5, 0, 0, 0, 0, 0, 0, 0, 0};
-  static unsigned char response[4] = {0, 0, 0, 0};
+  unsigned char response[4] = {0, 0, 0, 0};
 
   //9fa5 9f000000 00 00 0000?
   request[0] = 0x9f; request[2] = 0x9f;
   ret = libusb_bulk_transfer(handle, send_addr, request, 10, &len, 1000);
   if (ret != 0 || len != 10){
-    std::cout << "Could not send unknown_1 data to card!" << std::endl;
-    return 0;
+    std::cout << "Could not send data_1 to card!" << std::endl;
+    return false;
   }
 
   //90a5 90000000 00 00 0000?
   request[0] = 0x90; request[2] = 0x90;
   ret = libusb_bulk_transfer(handle, send_addr, request, 10, &len, 1000);
   if (ret != 0 || len != 10){
-    std::cout << "Could not send unknown_2 data to card!" << std::endl;
-    return 0;
+    std::cout << "Could not send data_2 to card!" << std::endl;
+    return false;
   }
   
   //reply[4] = c2ff01c0
   ret = libusb_bulk_transfer(handle, recv_addr, response, 4, &len, 1000);
   if (ret != 0 || len != 4){
-    std::cout << "Could not receive unknown data from card!" << std::endl;
-    return 0;
+    std::cout << "Could not receive data from card!" << std::endl;
+    return false;
   }
-  return response;
+  return true;
 }
 
 /// Retrieves the first 512 bytes of the inserted card ROM and returns it.
@@ -191,6 +191,20 @@ int put_save(unsigned char offset, unsigned int bytepos, unsigned char * data){
   request[3] = (bytepos >> 8) & 0xFF;
   request[4] = (bytepos >> 16) & 0xFF;
   request[5] = (bytepos >> 24) & 0xFF;
+
+  if (offset == 0x93 || offset == 0x53 || offset == 0xA3){
+    //the "command" for erase - needed for offsets 0x93, 0x53 and 0xA3
+    if (offset == 0x93){
+      request[0] = 0x5b;
+    }else{
+      request[0] = 0x5e;
+    }
+    ret = libusb_bulk_transfer(handle, send_addr, request, 10, &len, 10000);
+    if (ret != 0 || len != 10){
+      std::cout << "Warning: could not send erase command to card." << std::endl;
+    }
+    request[0] = 0x7b;
+  }
 
   //7ba5 00000000 02 13 0000?
   
@@ -323,11 +337,10 @@ int main(int argc, char **argv){
     return drop_adapter("No card is plugged in.");
   }
 
-  // write/read the unknown values. Official software does this, so we do, too.
-  // hexdump if debug is on, abort if anything goes awry.
-  unsigned char * card_unknown = get_unknown();
-  if (card_unknown && debug){hexdump(card_unknown, 4);}
-  if (!card_unknown){return drop_adapter("Read error.");}
+  // prepare the card, abort if anything goes awry.
+  if (!prepare_card()){
+    return drop_adapter("Error preparing card.");
+  }
 
   // retrieve the first 512 bytes of the card header and hexdump if debug is on
   // abort if anything went wrong
