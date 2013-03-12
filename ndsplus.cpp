@@ -17,6 +17,7 @@ If not, see <http://www.gnu.org/licenses/>.
 #include <fstream>
 #include <unistd.h>
 #include <getopt.h>
+#include <stdlib.h>
 #include "libusb.h"
 
 /// Outputs a 24-byte aligned hexdump to stderr.
@@ -234,6 +235,7 @@ int main(int argc, char **argv){
   bool restore = false;
   bool wipe = false;
   bool debug = false;
+  unsigned int forced_size = 0;
   std::string backup_filename;
   std::string restore_filename;
 
@@ -244,11 +246,12 @@ int main(int argc, char **argv){
       {"backup",  required_argument, 0, 'b'},
       {"restore", required_argument, 0, 'r'},
       {"wipe",    no_argument,       0, 'w'},
+      {"size",    required_argument, 0, 's'},
       {"debug",   no_argument,       0, 'd'},
       {"help",    no_argument,       0, 'h'},
       {0,                   0,       0, 0  }
     };
-    opt = getopt_long(argc, argv, "b:r:wdh", long_options, 0);
+    opt = getopt_long(argc, argv, "b:r:ws:dh", long_options, 0);
     switch (opt){
       case 'b':
         backup = true;
@@ -257,6 +260,9 @@ int main(int argc, char **argv){
       case 'r':
         restore = true;
         restore_filename = optarg;
+        break;
+      case 's':
+        forced_size = atoi(optarg);
         break;
       case 'w':
         wipe = true;
@@ -270,6 +276,7 @@ int main(int argc, char **argv){
         std::cout << " --backup <file>,  -b <file> - Backs up savegame to file" << std::endl;
         std::cout << " --restore <file>  -r <file> - Restores savegame from file" << std::endl;
         std::cout << " --wipe            -w        - Wipes savegame on card" << std::endl;
+        std::cout << " --size            -s <num>  - Force a savegame size, in bytes" << std::endl;
         std::cout << " --debug           -d        - Enables stderr raw hex output" << std::endl;
         std::cout << " --help            -h        - Output this message" << std::endl;
         return 1;
@@ -371,20 +378,25 @@ int main(int argc, char **argv){
   switch (card_status[0]){
     case 0x01:
       save_size = 512;
-      printf("Save: 0.5 KiB EEPROM\n");
+      printf("Detected save: 0.5 KiB EEPROM\n");
       break;
     case 0x02:
       save_size = 8192;
-      printf("Save: 8 KiB EEPROM\n");
+      printf("Detected save: 8 KiB EEPROM\n");
       break;
     case 0x12:
       save_size = 65536;
-      printf("Save: 64 KiB EEPROM\n");
+      printf("Detected save: 64 KiB EEPROM\n");
       break;
     default:
       save_size = 1 << card_status[0x04];
-      printf("Save: %i KiB FLASH\n", save_size >> 10);
+      printf("Detected save: %i KiB FLASH\n", save_size >> 10);
       break;
+  }
+  
+  if (forced_size > 0){
+    save_size = forced_size;
+    printf("Overriding to: %i KiB\n", save_size >> 10);
   }
 
   // do a backup if requested - abort if file cannot be opened
